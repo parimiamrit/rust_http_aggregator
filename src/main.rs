@@ -11,7 +11,6 @@ use opentelemetry_sdk::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing_actix_web::TracingLogger;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -19,27 +18,27 @@ const APPLICATION_NAME: &str = "rust_http_aggregator";
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 struct AggregatorRequest {
-    #[serde(alias = "requestID")]
+    #[serde(rename = "requestID")]
     request_id: String,
-    #[serde(alias = "url")]
+    #[serde(rename = "url")]
     url: String,
-    #[serde(alias = "method")]
+    #[serde(rename = "method")]
     method: String,
-    #[serde(alias = "payload")]
+    #[serde(rename = "payload")]
     payload: Value,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 struct AggregatorResponse {
-    #[serde(alias = "requestId")]
+    #[serde(rename = "requestId")]
     request_id: String,
-    #[serde(alias = "url")]
+    #[serde(rename = "url")]
     url: String,
-    #[serde(alias = "status")]
+    #[serde(rename = "status")]
     status: u16,
-    #[serde(alias = "data")]
+    #[serde(rename = "data")]
     response: Value,
-    #[serde(alias = "latency")]
+    #[serde(rename = "latency")]
     latency: u128,
 }
 
@@ -200,7 +199,7 @@ struct ApiDoc;
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ::std::env::set_var("RUST_LOG", "trace");
+    ::std::env::set_var("RUST_LOG", "info");
     env_logger::init();
 
     // Configure prometheus or your preferred metrics service
@@ -243,7 +242,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     HttpServer::new(move || {
         App::new()
             .wrap(RequestTracing::new())
-            .wrap(TracingLogger::default())
             .wrap(RequestMetrics::default())
             .service(sample_get)
             .service(sample_post)
