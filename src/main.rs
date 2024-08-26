@@ -97,24 +97,6 @@ async fn process_single_request(
                 response,
                 now.elapsed().as_millis(),
             );
-
-            // Probably more efficient to do this?
-            /*if unwrapped_response.status() != reqwest::StatusCode::OK {
-                return AggregatorResponse::new(
-                    request_id.clone(),
-                    url.clone(),
-                    unwrapped_response.status().as_u16(),
-                    serde_json::to_value(unwrapped_response.text().await.unwrap()).unwrap(),
-                    now.elapsed().as_millis(),
-                );
-            }
-            return AggregatorResponse::new(
-                request_id.clone(),
-                url.clone(),
-                unwrapped_response.status().as_u16(),
-                unwrapped_response.json::<Value>().await.unwrap(),
-                now.elapsed().as_millis(),
-            );*/
         }
         "POST" => {
             let response = client.post(url.clone()).json(&payload).send().await;
@@ -180,14 +162,17 @@ async fn process(req_body: Json<Vec<AggregatorRequest>>) -> impl Responder {
 
 #[get("/sample")]
 async fn sample_get() -> impl Responder {
-    // std::thread::sleep(Duration::from_secs(3));
     HttpResponse::ServiceUnavailable().json(SampleResponse::new(true))
 }
 
 #[post("/sample")]
 async fn sample_post(req_body: Json<Value>) -> impl Responder {
-    // std::thread::sleep(Duration::from_secs(3));
     HttpResponse::Ok().json(req_body)
+}
+
+#[get("/health")]
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok()
 }
 
 #[derive(OpenApi)]
@@ -243,6 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         App::new()
             .wrap(RequestTracing::new())
             .wrap(RequestMetrics::default())
+            .service(health_check)
             .service(sample_get)
             .service(sample_post)
             .service(process)
