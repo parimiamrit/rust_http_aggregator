@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use actix_web::{post, web::{self, Data, Json}, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web::{self, Data, Json}, App, HttpResponse, HttpServer, Responder};
 use actix_web_opentelemetry::{PrometheusMetricsHandler, RequestMetrics, RequestTracing};
 use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
