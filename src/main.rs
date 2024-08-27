@@ -164,6 +164,11 @@ async fn process(req_body: Json<Vec<AggregatorRequest>>, data: web::Data<reqwest
     HttpResponse::Ok().json(res)
 }
 
+#[get("/health")]
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok()
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(process),
@@ -218,6 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .app_data(web::Data::clone(&web::Data::new(reqwest::Client::new())))
             .wrap(RequestTracing::new())
             .wrap(RequestMetrics::default())
+            .service(health_check)
             .service(process)
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
