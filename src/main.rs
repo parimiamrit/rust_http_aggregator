@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use actix_web::{get, post, web::Json, App, HttpResponse, HttpServer, Responder};
+use actix_web::{post, web::{self, Data, Json}, App, HttpResponse, HttpServer, Responder};
 use actix_web_opentelemetry::{PrometheusMetricsHandler, RequestMetrics, RequestTracing};
 use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
@@ -24,7 +24,7 @@ struct AggregatorRequest {
     url: String,
     #[serde(rename = "method")]
     method: String,
-    #[serde(rename = "payload")]
+    #[serde(rename = "payload", default)]
     payload: Value,
 }
 
@@ -60,15 +60,6 @@ impl AggregatorResponse {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct SampleResponse {
-    success: bool,
-}
-impl SampleResponse {
-    pub fn new(success: bool) -> Self {
-        SampleResponse { success }
-    }
-}
 
 async fn process_single_request(
     AggregatorRequest {
@@ -77,70 +68,65 @@ async fn process_single_request(
         method,
         payload,
     }: AggregatorRequest,
+    http_client: Data<reqwest::Client>,
 ) -> AggregatorResponse {
-    let client = reqwest::Client::new();
     let now = Instant::now();
     match method.as_str() {
         "GET" => {
-            let response = client.get(url.clone()).send().await;
+            let response = http_client.get(&url).send().await;
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
             let bytes = &*unwrapped_response.bytes().await.unwrap();
-            let mapping_time = Instant::now();
             let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
-            log::info!("mapping time: {:?}", mapping_time.elapsed().as_millis());
             return AggregatorResponse::new(
-                request_id.clone(),
-                url.clone(),
+                request_id,
+                url,
                 status,
                 response,
                 now.elapsed().as_millis(),
             );
-
-            // Probably more efficient to do this?
-            /*if unwrapped_response.status() != reqwest::StatusCode::OK {
-                return AggregatorResponse::new(
-                    request_id.clone(),
-                    url.clone(),
-                    unwrapped_response.status().as_u16(),
-                    serde_json::to_value(unwrapped_response.text().await.unwrap()).unwrap(),
-                    now.elapsed().as_millis(),
-                );
-            }
-            return AggregatorResponse::new(
-                request_id.clone(),
-                url.clone(),
-                unwrapped_response.status().as_u16(),
-                unwrapped_response.json::<Value>().await.unwrap(),
-                now.elapsed().as_millis(),
-            );*/
         }
         "POST" => {
-            let response = client.post(url.clone()).json(&payload).send().await;
+            let response = http_client.post(&url).json(&payload).send().await;
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
             let bytes = &*unwrapped_response.bytes().await.unwrap();
             let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
             return AggregatorResponse::new(
-                request_id.clone(),
-                url.clone(),
+                request_id,
+                url,
+                status,
+                response,
+                now.elapsed().as_millis(),
+            );
+        }
+        "PUT" => {
+            let response = http_client.put(&url).json(&payload).send().await;
+            let unwrapped_response = response.unwrap();
+
+            let status = unwrapped_response.status().as_u16();
+            let bytes = &*unwrapped_response.bytes().await.unwrap();
+            let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
+            return AggregatorResponse::new(
+                request_id,
+                url,
                 status,
                 response,
                 now.elapsed().as_millis(),
             );
         }
         "PATCH" => {
-            let response = client.patch(url.clone()).json(&payload).send().await;
+            let response = http_client.patch(&url).json(&payload).send().await;
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
             let bytes = &*unwrapped_response.bytes().await.unwrap();
             let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
             return AggregatorResponse::new(
-                request_id.clone(),
-                url.clone(),
+                request_id,
+                url,
                 status,
                 response,
                 now.elapsed().as_millis(),
@@ -148,8 +134,8 @@ async fn process_single_request(
         }
         _ => {
             return AggregatorResponse::new(
-                request_id.clone(),
-                url.clone(),
+                request_id,
+                url,
                 405,
                 serde_json::to_value("Unknown request method").unwrap(),
                 now.elapsed().as_millis(),
@@ -160,13 +146,13 @@ async fn process_single_request(
 
 #[utoipa::path(post, responses((status=200, description="Process HTTP requests parallelly", body=Vec<AggregatorResponse>)), request_body(content=Vec<AggregatorRequest>, content_type = "application/json"))]
 #[post("/process")]
-async fn process(req_body: Json<Vec<AggregatorRequest>>) -> impl Responder {
+async fn process(req_body: Json<Vec<AggregatorRequest>>, data: web::Data<reqwest::Client>) -> impl Responder {
     println!("request body: {:?}", req_body);
 
     let req_body_clone = req_body.to_vec();
     let futures: Vec<_> = req_body_clone
         .into_iter()
-        .map(|single_req| tokio::spawn(process_single_request(single_req)))
+        .map(|single_req| tokio::spawn(process_single_request(single_req, Data::clone(&data))))
         .collect();
 
     let mut res = Vec::with_capacity(req_body.len());
@@ -176,18 +162,6 @@ async fn process(req_body: Json<Vec<AggregatorRequest>>) -> impl Responder {
     }
 
     HttpResponse::Ok().json(res)
-}
-
-#[get("/sample")]
-async fn sample_get() -> impl Responder {
-    // std::thread::sleep(Duration::from_secs(3));
-    HttpResponse::ServiceUnavailable().json(SampleResponse::new(true))
-}
-
-#[post("/sample")]
-async fn sample_post(req_body: Json<Value>) -> impl Responder {
-    // std::thread::sleep(Duration::from_secs(3));
-    HttpResponse::Ok().json(req_body)
 }
 
 #[derive(OpenApi)]
@@ -241,10 +215,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     HttpServer::new(move || {
         App::new()
+            .app_data(web::Data::clone(&web::Data::new(reqwest::Client::new())))
             .wrap(RequestTracing::new())
             .wrap(RequestMetrics::default())
-            .service(sample_get)
-            .service(sample_post)
             .service(process)
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
