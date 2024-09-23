@@ -1,20 +1,18 @@
-use std::time::{Duration, Instant};
+use std::{collections::HashMap, time::{Duration, Instant}};
 
 use actix_web::{get, post, web::{self, Data, Json}, App, HttpResponse, HttpServer, Responder};
-use actix_web_opentelemetry::{PrometheusMetricsHandler, RequestMetrics, RequestTracing};
-use opentelemetry::{global, KeyValue};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    metrics::SdkMeterProvider,
-    trace::{self, Sampler},
-    Resource,
-};
+use actix_web_opentelemetry::RequestTracing;
+use actix_web_prom::{ActixMetricsConfiguration, PrometheusMetricsBuilder};
+use bytes::Buf;
+use opentelemetry::{ KeyValue};
+use opentelemetry_otlp::{TonicExporterBuilder, WithExportConfig};
+use opentelemetry_sdk::{propagation::TraceContextPropagator, runtime::TokioCurrentThread, trace::{self}, Resource};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-const APPLICATION_NAME: &str = "rust_http_aggregator";
+const APPLICATION_NAME: &str = "rust-http-aggregator";
 
 #[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
 struct AggregatorRequest {
@@ -77,8 +75,7 @@ async fn process_single_request(
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
-            let bytes = &*unwrapped_response.bytes().await.unwrap();
-            let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
+            let response = serde_json::from_slice::<Value>(unwrapped_response.bytes().await.unwrap().chunk()).unwrap_or_default();
             return AggregatorResponse::new(
                 request_id,
                 url,
@@ -92,8 +89,7 @@ async fn process_single_request(
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
-            let bytes = &*unwrapped_response.bytes().await.unwrap();
-            let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
+            let response = serde_json::from_slice::<Value>(unwrapped_response.bytes().await.unwrap().chunk()).unwrap_or_default();
             return AggregatorResponse::new(
                 request_id,
                 url,
@@ -107,8 +103,7 @@ async fn process_single_request(
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
-            let bytes = &*unwrapped_response.bytes().await.unwrap();
-            let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
+            let response = serde_json::from_slice::<Value>(unwrapped_response.bytes().await.unwrap().chunk()).unwrap_or_default();
             return AggregatorResponse::new(
                 request_id,
                 url,
@@ -122,8 +117,7 @@ async fn process_single_request(
             let unwrapped_response = response.unwrap();
 
             let status = unwrapped_response.status().as_u16();
-            let bytes = &*unwrapped_response.bytes().await.unwrap();
-            let response = serde_json::from_slice::<Value>(bytes).unwrap_or_default();
+            let response = serde_json::from_slice::<Value>(unwrapped_response.bytes().await.unwrap().chunk()).unwrap_or_default();
             return AggregatorResponse::new(
                 request_id,
                 url,
@@ -147,21 +141,20 @@ async fn process_single_request(
 #[utoipa::path(post, responses((status=200, description="Process HTTP requests parallelly", body=Vec<AggregatorResponse>)), request_body(content=Vec<AggregatorRequest>, content_type = "application/json"))]
 #[post("/process")]
 async fn process(req_body: Json<Vec<AggregatorRequest>>, data: web::Data<reqwest::Client>) -> impl Responder {
-    println!("request body: {:?}", req_body);
+    // log::info!("Request body: {:?}", req_body);
 
-    let req_body_clone = req_body.to_vec();
-    let futures: Vec<_> = req_body_clone
-        .into_iter()
-        .map(|single_req| tokio::spawn(process_single_request(single_req, Data::clone(&data))))
-        .collect();
-
-    let mut res = Vec::with_capacity(req_body.len());
-
-    for future in futures.into_iter() {
-        res.push(future.await.unwrap());
+    let mut set = tokio::task::JoinSet::new();
+    for req in req_body.to_vec() {
+        set.spawn(process_single_request(req, Data::clone(&data)));
     }
 
-    HttpResponse::Ok().json(res)
+    let mut result = Vec::with_capacity(req_body.len());
+
+    while let Some(future) = set.join_next().await {
+        result.push(future.unwrap());
+    }
+
+    HttpResponse::Ok().json(result)
 }
 
 #[get("/health")]
@@ -179,69 +172,57 @@ struct ApiDoc;
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ::std::env::set_var("RUST_LOG", "info");
+    ::std::env::set_var("OTEL_LOG_LEVEL", "INFO");
     env_logger::init();
 
-    // Configure prometheus or your preferred metrics service
-    let registry = prometheus::Registry::new();
-    let prometheus_exporter = opentelemetry_prometheus::exporter()
-        .with_registry(registry.clone())
+    let mut labels = HashMap::new();
+    labels.insert("application".to_string(), APPLICATION_NAME.to_string());
+    let prometheus = PrometheusMetricsBuilder::new("http")
+        .endpoint("/metrics")
+        .metrics_configuration(ActixMetricsConfiguration::default())
+        .const_labels(labels)
         .build()
         .unwrap();
-    // set up your meter provider with your exporter(s)
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(prometheus_exporter)
-        .build();
-    global::set_meter_provider(meter_provider.clone());
 
-    global::set_text_map_propagator(opentelemetry_jaeger_propagator::Propagator::new());
-    let jaeger_tracer_provider = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_endpoint(
-                    std::env::var("JAEGER_COLLECTOR_URL")
-                        .unwrap_or("http://localhost:4317".to_string()),
-                )
-                .with_timeout(Duration::from_secs(3)),
-        )
-        .with_trace_config(
-            trace::Config::default()
-                .with_sampler(Sampler::AlwaysOn)
-                .with_resource(Resource::new(vec![KeyValue::new(
-                    "service.name",
-                    APPLICATION_NAME,
-                )])),
-        )
-        .install_batch(opentelemetry_sdk::runtime::Tokio)
-        .expect("Failed to install OpenTelemetry tracer.");
-    global::set_tracer_provider(jaeger_tracer_provider);
-    log::info!("Tracer setup done!");
+    // Tracing
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+ 
+    let service_name_resource = Resource::new(vec![KeyValue::new(
+        "service.name",
+        APPLICATION_NAME
+    )]);
+ 
+    // let collector_endpoint = "";
+    let collector_endpoint = ::std::env::var("JAEGER_COLLECTOR_URL").unwrap_or("http://localhost:4317".into());
+    log::info!("collector endpoint: {:?}", collector_endpoint);
+    let _tracer = opentelemetry_otlp::new_pipeline()
+    .tracing()
+    .with_exporter(TonicExporterBuilder::default().with_endpoint(collector_endpoint))
+    .with_trace_config(
+        trace::Config::default()
+        .with_resource(service_name_resource)
+        // .with_sampler(sampler)
+    )
+    .install_batch(TokioCurrentThread)
+    .expect("pipeline install error");
+
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::clone(&web::Data::new(reqwest::Client::new())))
+            .wrap(prometheus.clone())
             .wrap(RequestTracing::new())
-            .wrap(RequestMetrics::default())
             .service(health_check)
             .service(process)
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api-docs/openapi.json", ApiDoc::openapi()),
             )
-            .route(
-                "/metrics",
-                actix_web::web::get().to(PrometheusMetricsHandler::new(registry.clone())),
-            )
     })
     .disable_signals()
-    .bind(("127.0.0.1", 8080))?
+    .bind(("0.0.0.0", 9880))?
     .run()
     .await?;
-
-    global::shutdown_tracer_provider();
-
-    meter_provider.shutdown()?;
 
     Ok(())
 }

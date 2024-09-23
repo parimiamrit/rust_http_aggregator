@@ -1,28 +1,27 @@
 [package]
-name = "rust_http_aggregator"
+name = "rust-http-aggregator"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-actix-web = "4.9.0"
-actix-web-opentelemetry = { version="0.18.0", features=["metrics", "metrics-prometheus", "opentelemetry-prometheus", "prometheus"]}
+actix-web = "4.0"
 bytes = "1.7.1"
-opentelemetry = {version="0.24.0", features=["trace"]}
-opentelemetry_sdk = { version = "0.24.1", features=["rt-tokio"] }
-opentelemetry-prometheus = "0.17.0"
 prometheus = "0.13.4"
 reqwest = { version="0.12.5", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.125"
-tokio = "1.39.2"
 utoipa = { version="4.2.3", features = ["actix_extras"]}
 utoipa-swagger-ui = { version="7.1.0", features = ["actix-web"]}
-opentelemetry-semantic-conventions = "0.16.0"
-tracing = "0.1.40"
-opentelemetry-jaeger = {version="0.22.0", features=["collector_client","rt-tokio","isahc_collector_client","isahc_collector_client"]}
-tracing-opentelemetry = "0.25.0"
-opentelemetry-jaeger-propagator = "0.3.0"
-cargo-whatfeatures = "0.9.13"
-opentelemetry-otlp = "0.17.0"
 log = "0.4.22"
 env_logger = "0.11.5"
+actix-web-prom = { version="0.8.0", feature = "process"}
+tokio = { version = "1", features = ["full"] }
+
+
+actix-web-opentelemetry = { version = "*", features = ["metrics-prometheus", "sync-middleware", "awc"] }
+opentelemetry = { version = "0.23", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.23", features = ["metrics", "rt-tokio-current-thread"] }
+opentelemetry-otlp = "0.16"
+opentelemetry-zipkin = { version = "0.25.0", features = ["reqwest-client"], default-features = false }
+opentelemetry-stdout = { version = "0.4", features = ["trace", "metrics"] }
+awc = "3.5.1"
