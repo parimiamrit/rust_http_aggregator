@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-actix-web = "4.0"
+actix-web = { version = "4.9"}
 bytes = "1.7.1"
-prometheus = "0.13.4"
+prometheus = { version = "0.13.4", features = ["process"] }
 reqwest = { version="0.12.5", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.125"
@@ -14,14 +14,20 @@ utoipa = { version="4.2.3", features = ["actix_extras"]}
 utoipa-swagger-ui = { version="7.1.0", features = ["actix-web"]}
 log = "0.4.22"
 env_logger = "0.11.5"
-actix-web-prom = { version="0.8.0", feature = "process"}
 tokio = { version = "1", features = ["full"] }
 
 
-actix-web-opentelemetry = { version = "*", features = ["metrics-prometheus", "sync-middleware", "awc"] }
-opentelemetry = { version = "0.23", default-features = false, features = ["trace"] }
-opentelemetry_sdk = { version = "0.23", features = ["metrics", "rt-tokio-current-thread"] }
-opentelemetry-otlp = "0.16"
-opentelemetry-zipkin = { version = "0.25.0", features = ["reqwest-client"], default-features = false }
+actix-web-opentelemetry = { version = "*", features = ["metrics-prometheus", "sync-middleware"] }
+opentelemetry = { version = "0.25", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.25", features = ["rt-tokio-current-thread"] }
+opentelemetry-otlp = { version = "0.25", features = ["http-proto"]}
+opentelemetry-zipkin = { version = "0.25.0", features = ["reqwest-client", "reqwest"], default-features = false }
 opentelemetry-stdout = { version = "0.4", features = ["trace", "metrics"] }
-awc = "3.5.1"
+reqwest-tracing = "0.5.3"
+reqwest-middleware = "0.3.3"
+actix-web-prometheus = { version = "0.1.0-beta.8", features = ["process"] }
+opentelemetry-http = { version = "0.25.0", features = ["reqwest"]}
+tracing-actix-web = "0.7.12"
+http = "1.1.0"
+actix-http = { version = "3.9.0", default-features = false}
+actix-router = { version = "0.5.3", default-features = false}
